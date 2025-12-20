@@ -1,0 +1,158 @@
+---
+# Configure Bastion as NAT Gateway for private nodes
+- name: Setup Bastion as NAT Gateway
+  hosts: bastion_host
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Enable IP forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: Make IP forwarding persistent
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.ip_forward=1'
+        state: present
+
+    - name: Get public interface name
+      shell: ip route | grep default | awk '{print $5}' | head -n1
+      register: public_interface
+      changed_when: false
+
+    - name: Get private interface name
+      shell: ip addr | grep 'inet 192.168.0' | awk '{print $NF}' | head -n1
+      register: private_interface
+      changed_when: false
+
+    - name: Display interfaces
+      debug:
+        msg: |
+          Public interface: {{ public_interface.stdout }}
+          Private interface: {{ private_interface.stdout }}
+
+    - name: Install iptables-persistent
+      apt:
+        name: iptables-persistent
+        state: present
+        update_cache: yes
+
+    - name: Configure NAT (MASQUERADE)
+      iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: "{{ public_interface.stdout }}"
+        source: 192.168.0.0/24
+        jump: MASQUERADE
+        comment: NAT for private network
+      become: yes
+
+    - name: Allow forwarding from private to public
+      iptables:
+        chain: FORWARD
+        in_interface: "{{ private_interface.stdout }}"
+        out_interface: "{{ public_interface.stdout }}"
+        jump: ACCEPT
+      become: yes
+
+    - name: Allow forwarding from public to private (established)
+      iptables:
+        chain: FORWARD
+        in_interface: "{{ public_interface.stdout }}"
+        out_interface: "{{ private_interface.stdout }}"
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+      become: yes
+
+    - name: Save iptables rules
+      shell: |
+        iptables-save > /etc/iptables/rules.v4
+      become: yes
+
+    - name: Display current NAT rules
+      shell: iptables -t nat -L POSTROUTING -n -v
+      register: nat_rules
+      changed_when: false
+
+    - name: Show NAT rules
+      debug:
+        var: nat_rules.stdout_lines
+
+- name: Configure private nodes to use bastion as gateway
+  hosts: k3s_cluster
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Get current default gateway
+      shell: ip route | grep default | awk '{print $3}'
+      register: current_gateway
+      changed_when: false
+
+    - name: Display current gateway
+      debug:
+        msg: "Current gateway: {{ current_gateway.stdout }}"
+
+    - name: Check if bastion is reachable
+      shell: ping -c 2 192.168.0.110
+      register: ping_bastion
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display ping result
+      debug:
+        var: ping_bastion.stdout_lines
+
+    - name: Set bastion as default gateway
+      shell: |
+        # Remove old default route
+        ip route del default || true
+        # Add new default route via bastion
+        ip route add default via 192.168.0.110
+      when: current_gateway.stdout != '192.168.0.110'
+
+    - name: Make gateway persistent (netplan)
+      blockinfile:
+        path: /etc/netplan/50-cloud-init.yaml
+        block: |
+          network:
+            version: 2
+            ethernets:
+              {{ ansible_default_ipv4.interface }}:
+                dhcp4: no
+                addresses:
+                  - {{ ansible_default_ipv4.address }}/{{ ansible_default_ipv4.netmask | ipaddr('prefix') }}
+                routes:
+                  - to: default
+                    via: 192.168.0.110
+                nameservers:
+                  addresses:
+                    - 8.8.8.8
+                    - 1.1.1.1
+        create: yes
+        backup: yes
+      ignore_errors: yes
+
+    - name: Test internet connectivity
+      shell: ping -c 2 8.8.8.8
+      register: ping_internet
+      changed_when: false
+
+    - name: Display internet test
+      debug:
+        msg: "Internet connectivity: {{ 'OK' if ping_internet.rc == 0 else 'FAILED' }}"
+
+    - name: Test DNS resolution
+      shell: ping -c 2 google.com
+      register: ping_dns
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display DNS test
+      debug:
+        msg: "DNS resolution: {{ 'OK' if ping_dns.rc == 0 else 'FAILED' }}"

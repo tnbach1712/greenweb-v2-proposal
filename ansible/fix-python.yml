@@ -1,0 +1,22 @@
+---
+# Fix Ansible Python dependencies on remote hosts
+- name: Fix Python dependencies on all hosts
+  hosts: all
+  gather_facts: no
+  
+  tasks:
+    - name: Install Python3 and pip
+      raw: |
+        if ! command -v python3 &> /dev/null; then
+          apt-get update && apt-get install -y python3 python3-pip
+        fi
+      become: yes
+      ignore_errors: yes
+
+    - name: Test Python3
+      raw: python3 --version
+      register: python_version
+
+    - name: Display Python version
+      debug:
+        var: python_version.stdout_lines

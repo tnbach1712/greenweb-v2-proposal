@@ -1,0 +1,31 @@
+---
+# Kill any running apt/dpkg processes
+- name: Fix apt lock issues
+  hosts: k3s_cluster
+  gather_facts: no
+  become: yes
+  
+  tasks:
+    - name: Kill any apt/dpkg processes
+      shell: |
+        killall apt apt-get dpkg 2>/dev/null || true
+        rm -f /var/lib/dpkg/lock-frontend
+        rm -f /var/lib/dpkg/lock
+        rm -f /var/cache/apt/archives/lock
+        rm -f /var/lib/apt/lists/lock
+        dpkg --configure -a
+      ignore_errors: yes
+
+    - name: Wait a moment
+      pause:
+        seconds: 3
+
+    - name: Test apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 0
+      register: apt_result
+
+    - name: Show result
+      debug:
+        msg: "APT is working on {{ inventory_hostname }}"

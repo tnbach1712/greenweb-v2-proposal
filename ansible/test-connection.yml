@@ -1,0 +1,37 @@
+---
+- name: Test SSH connection through bastion
+  hosts: all
+  gather_facts: no
+  
+  tasks:
+    - name: Ping all hosts
+      ping:
+      register: ping_result
+
+    - name: Display connection result
+      debug:
+        msg: "✅ Successfully connected to {{ inventory_hostname }} ({{ ansible_host }})"
+
+    - name: Get hostname
+      shell: hostname
+      register: hostname_output
+
+    - name: Display hostname
+      debug:
+        var: hostname_output.stdout
+
+    - name: Get system info
+      shell: |
+        echo "=== System Information ==="
+        echo "Hostname: $(hostname)"
+        echo "OS: $(grep PRETTY_NAME /etc/os-release | cut -d'=' -f2 | tr -d '\"')"
+        echo "Kernel: $(uname -r)"
+        echo "IP: $(hostname -I | awk '{print $1}')"
+        echo "CPU: $(nproc) cores"
+        echo "Memory: $(free -h | awk '/^Mem:/ {print $2}')"
+        echo "Disk: $(df -h / | awk 'NR==2 {print $2}')"
+      register: system_info
+
+    - name: Show system info
+      debug:
+        var: system_info.stdout_lines
