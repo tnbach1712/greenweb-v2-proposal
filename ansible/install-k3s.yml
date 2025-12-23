@@ -247,5 +247,4 @@
           mkdir -p ~/.kube
           cp {{ playbook_dir }}/kubeconfig.yaml ~/.kube/config
           
-          Master node: {{ groups['k3s_masters'][0] }}
-          Worker nodes: {{ groups['k3s_workers'] | join(', ') }}
+          Master nodes: {{ groups['k3s_masters'] | join(', ') }}
